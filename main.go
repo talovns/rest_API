@@ -1,10 +1,97 @@
 package main
 
 import (
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"time"
 )
 
+// добавлено отсюда
+var jwtKey = []byte("my_secret_key")
+
+type Credentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+var users = []Credentials{
+	{Username: "bob", Password: "123"},
+	{Username: "dog", Password: "223"},
+	{Username: "gob", Password: "113"},
+}
+
+type Claims struct {
+	Username string `json:"username"`
+	jwt.StandardClaims
+}
+
+func generateToken(username string) (string, error) {
+	expirationTime := time.Now().Add(5 * time.Minute)
+	claims := &Claims{
+		Username: username,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: expirationTime.Unix(),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtKey)
+}
+
+func login(c *gin.Context) {
+	var creds Credentials
+
+	for _, name := range users {
+		if err := c.ShouldBindJSON(&creds); err != nil {
+			c.JSON(http.StatusOK, nil)
+		}
+		if name.Username == creds.Username {
+
+			// Здесь добавим простую проверку пароля
+
+			if creds.Username != name.Username || creds.Password != name.Password {
+				c.JSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
+				return
+			}
+
+			token, err := generateToken(creds.Username)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"message": "could not create token"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"token": token})
+			return
+		} else {
+			continue
+		}
+	}
+	if err := c.BindJSON(&creds); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid request"})
+		return
+	}
+}
+
+func authMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenString := c.GetHeader("Authorization")
+
+		claims := &Claims{}
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "unauthorized"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// до сюда
 type Sale struct {
 	ID        string `json:"id"`
 	GOODSNAME string `json:"goodsname"`
@@ -20,15 +107,23 @@ var sales = []Sale{
 
 func main() {
 	router := gin.Default()
+	router.POST("/login", login)
 
-	// Получение всех книг
-	router.GET("/sales", getSales)
+	protected := router.Group("/")
+	protected.Use(authMiddleware())
+	{
+		protected.GET("/sales", getSales)
+		protected.POST("/sales", createSale)
+		// другие защищенные маршруты
+	}
+	// Получение всех книгx
+	//router.GET("/sales", getSales)
 
 	// Получение книги по ID
 	router.GET("/sales/:id", getSaleByID)
 
 	// Создание новой книги
-	router.POST("/sales", createSale)
+	//router.POST("/sales", createSale)
 
 	// Обновление существующей книги
 	router.PUT("/sales/:id", updateSale)
